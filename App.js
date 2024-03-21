@@ -1,118 +1,167 @@
+import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import React, {useEffect} from 'react';
-import { StyleSheet, Text, View, ScrollView, FlatList, TouchableOpacity, Button } from 'react-native';
-import Sound from 'react-native';
+import { FlatList, Button, StyleSheet, Text, View } from 'react-native';
 import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export default function App() {
-  const [recording, setRecording] = React.useState();
-  const [item, setItems] = React.useState();
-
+export default App = () => {
+  const [recording, setRecording] = useState(null);
+  const [recordingUris, setRecordingUris] = useState([]);
+  const [playback, setPlayback] = useState(null);
+  const [permissionsResponse, requestPermission] = Audio.usePermissions();
+  const counter = 0;
   useEffect(() => {
-    Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
-    });
+    // Load previously saved recordings from AsyncStorage
+    const loadRecordings = async () => {
+      try {
+        const savedRecordings = await AsyncStorage.getItem('recordings');
+        if (savedRecordings) {
+          setRecordingUris(JSON.parse(savedRecordings));
+        }
+      } catch (error) {
+        console.error('Failed to load recordings:', error);
+      }
+    };
+    loadRecordings();
   }, []);
 
-  const startRecording = async (soundIndex) => {
+  const saveRecording = async (uri) => {
     try {
-      console.log('Requesting permissions...');
-      await Audio.requestPermissionsAsync();
-      console.log('Starting recording...');
-      const recording = new Audio.Recording();
-      await recording.prepareToRecordAsync(Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY);
-      await recording.startAsync();
-      setRecording({ soundIndex, recording });
+      // Save the recorded URI to AsyncStorage
+      await AsyncStorage.setItem(
+        'recordings',
+        JSON.stringify([...recordingUris, uri])
+      );
+      console.log('Recording saved.');
     } catch (error) {
-      console.error('Failed to start recording', error);
+      console.error('Failed to save recording:', error);
     }
   };
 
+  const clearRecordings = async () => {
+    try {
+      // Clear the recordings from AsyncStorage
+      await AsyncStorage.removeItem('recordings');
+      setRecordingUris([]);
+      console.log('Recordings cleared.');
+    } catch (error) {
+      console.error('Failed to clear recordings:', error);
+    }
+  };
+
+  const playRecording = async (uri) => {
+    try {
+      if (!uri) {
+        console.error('Recording URI is null or undefined.');
+        return;
+      }
+  
+      // Check if playback is already in progress
+      if (playback !== null) {
+        // Stop any existing playback
+        await playback.stopAsync();
+        await playback.unloadAsync();
+      }
+  
+      // Create a new playback instance
+      const { sound } = await Audio.Sound.createAsync({ uri });
+      setPlayback(sound);
+      await sound.playAsync();
+      console.log('Playing recorded sound from', uri);
+    } catch (error) {
+      console.error('Failed to play recording:', error);
+      // Handle error, possibly reset playback state
+      setPlayback(null);
+    }
+  };
+
+  const renderItem = ({ item, index }) => (
+    <View style={styles.item}>
+      <Button title="Play" onPress={() => playRecording(item)} />
+      <Text>Custom Sound {index+1}</Text>
+    </View>
+  );
+
+  const startRecording = async () => {
+    try {
+      // request permission to use the mic
+      if (permissionsResponse.status !== 'granted') {
+        console.log('Requesting permissions.');
+        await requestPermission();
+      }
+      console.log('Permission is ', permissionsResponse.status);
+
+      // set some device specific values
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      console.log('Starting recording...');
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      setRecording(recording);
+      console.log('...recording');
+    }
+    catch (errorEvent) {
+      console.error('Failed to startRecording(): ', errorEvent);
+    }
+  }
 
   const stopRecording = async () => {
-    console.log('Stopping recording...');
     try {
-      await recording.recording.stopAndUnloadAsync();
-      const uri = recording.recording.getURI();
-      await saveRecording(uri, recording.soundIndex);
-    } catch (error) {
-      console.error('Failed to stop recording', error);
+      // stop the actual recording
+      await recording.stopAndUnloadAsync();
+
+      // save the recorded object location
+      const uri = recording.getURI();
+      setRecordingUris(prevUris => [...prevUris, uri]);
+
+      // forget the recording object
+      setRecording(undefined);
+
+      // log the result
+      console.log('Recording stopped and stored at ', uri);
+
+      saveRecording(uri);
     }
-  };
-
-  const playSound = async (soundIndex) => {
-    console.log('Playing sound...');
-    try {
-      const uri = await getRecordingUri(soundIndex);
-      if (uri) {
-        const { sound } = await Audio.Sound.createAsync({ uri });
-        await sound.playAsync();
-      } else {
-        console.log('No recording found for soundIndex:', soundIndex);
-      }
-    } catch (error) {
-      console.error('Failed to play sound', error);
+    catch (errorEvent) {
+      console.error('Failed to stopRecording(): ', errorEvent);
     }
-  };
+  }
 
-  const saveRecording = async (uri, soundIndex) => {
-    try {
-      const existingRecordings = await AsyncStorage.getItem('recordings');
-      let recordings = existingRecordings ? JSON.parse(existingRecordings) : {};
-      recordings[soundIndex] = uri;
-      await AsyncStorage.setItem('recordings', JSON.stringify(recordings));
-    } catch (error) {
-      console.error('Failed to save recording', error);
-    }
-  };
 
-  const getRecordingUri = async (soundIndex) => {
-    try {
-      const recordings = await AsyncStorage.getItem('recordings');
-      const parsedRecordings = recordings ? JSON.parse(recordings) : {};
-      return parsedRecordings[soundIndex];
-    } catch (error) {
-      console.error('Failed to get recording', error);
-      return null;
-    }
-  };
-
-  function clearRecordings(){}
-
-  const playButtons = [
-    { title: 'Sound 1', onPress: () => playSound(1) },
-    { title: 'Sound 2', onPress: () => playSound(2) },
-    { title: 'Sound 3', onPress: () => playSound(3) },
-    { title: 'Sound 4', onPress: () => playSound(4) },
-    { title: 'Sound 5', onPress: () => playSound(5) },
-    { title: 'Sound 6', onPress: () => playSound(6) },
-    { title: 'Sound 7', onPress: () => playSound(7) },
-    { title: 'Sound 8', onPress: () => playSound(8) },
-    { title: 'Sound 9', onPress: () => playSound(9) },
-  ];
-
-  const recordButtons = [
-    { title: 'Record Sound 1', onPress: () => startRecording(1) },
-    { title: 'Record Sound 2', onPress: () => startRecording(2) },
-    { title: 'Record Sound 3', onPress: () => startRecording(3) },
-  ];
+  function getRecordingLines() {
+    return recordingUris.map((recordingUri, index) => {
+      return (
+        <View key={index} style={styles.row}>
+          <Text style={styles.fill}>
+            New Sound #{index + 1}
+          </Text>
+          <Button onPress={() => playRecording(recordingUri)} title="Play"></Button>
+        </View>
+      );
+    });
+  }
 
   return (
     <View style={styles.container}>
-      <View style={styles.buttonContainer}>
-        <FlatList
-          data={playButtons}
-          numColumns={3}
-          renderItem={({ item }) => (
-            <View >
-              <Button style={styles.button} title={item.title} onPress={item.onPress} />
-            </View>
-          )}
-          keyExtractor={(item, index) => index.toString()}
-        />
-      </View>
+      <Button
+        title={recording ? 'Stop Recording' : 'Start Recording'}
+        onPress={recording ? stopRecording : startRecording}
+      />
+      <FlatList
+        data={recordingUris}
+        keyExtractor={(item, index) => index.toString()}
+        renderItem={renderItem}
+        numColumns={3}
+      />
+      {recordingUris.length > 0 &&
+        <Button
+          title="Clear Recordings"
+          onPress={clearRecordings}
+        />}
     </View>
   );
 }
@@ -120,22 +169,18 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#1b262c",
+    paddingTop: 22,
   },
-  buttonContainer: {
+  item: {
+    padding: 10,
+    marginVertical: 8,
+    marginHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 5,
     flex: 1,
-    margin: 5,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-around',
-    alignItems: 'flex-start',
-
-
-  },
-  button: {
-    height:110,
-    width: "29%",
-    margin: 10,
-    backgroundColor: "red",
+    minHeight: 100,
   },
 });
